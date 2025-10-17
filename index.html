@@ -227,14 +227,27 @@
                     columns.push(value.trim());
                     if (match[3] === '') break;
                 }
-                const questionContent = columns[headerMap['Soal']];
+
+                let questionContent = columns[headerMap['Soal']];
                 if (!questionContent || questionContent.length === 0) continue;
+
+                // --- LOGIKA BARU UNTUK GAMBAR ---
+                const imageUrlRegex = /(https?:\/\/[^\s]+(\.png|\.jpeg|\.jpg|\.gif|\.bmp))/i;
+                const imageMatch = questionContent.match(imageUrlRegex);
+                let imageUrl = '';
+                if (imageMatch) {
+                    imageUrl = imageMatch[0];
+                    questionContent = questionContent.replace(imageUrl, '').trim();
+                }
+                // ------------------------------------
+
                 const jenisSoal = (columns[headerMap['Jenis Soal']] || 'Pilihan Ganda').trim();
                 const questionObj = {
                     no: columns[headerMap['No']] || (i + 1),
-                    question: questionContent,
-                    linkGambar: columns[headerMap['Link Gambar']] || '',
+                    question: questionContent, // Teks soal yang sudah bersih
+                    linkGambar: imageUrl, // URL gambar yang diekstrak
                 };
+
                 if (jenisSoal === 'Pilihan Ganda') {
                     const options = [ 'Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E' ].map(key => columns[headerMap[key]]).filter(opt => opt && opt.length > 0);
                     const keyLetter = (columns[headerMap['Kunci Jawaban']] || '').toUpperCase();
@@ -338,11 +351,6 @@
             nextBtn.classList.add('hidden');
             const currentQuestions = currentQuizSection === 'pilihanGanda' ? pilihanGandaQuestions : uraianQuestions;
             const currentQuestion = currentQuestions[currentQuestionIndex];
-
-            // ================== KODE DIAGNOSTIK ==================
-            console.log("Mencoba menampilkan gambar untuk soal no:", currentQuestion.no);
-            console.log("Link Gambar yang diterima:", currentQuestion.linkGambar);
-            // ====================================================
 
             if (currentQuestion.linkGambar) {
                 questionImage.src = currentQuestion.linkGambar;
