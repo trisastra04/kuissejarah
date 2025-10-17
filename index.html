@@ -228,24 +228,14 @@
                     if (match[3] === '') break;
                 }
 
-                let questionContent = columns[headerMap['Soal']];
+                const questionContent = columns[headerMap['Soal']];
                 if (!questionContent || questionContent.length === 0) continue;
-
-                // --- LOGIKA BARU UNTUK GAMBAR ---
-                const imageUrlRegex = /(https?:\/\/[^\s]+(\.png|\.jpeg|\.jpg|\.gif|\.bmp))/i;
-                const imageMatch = questionContent.match(imageUrlRegex);
-                let imageUrl = '';
-                if (imageMatch) {
-                    imageUrl = imageMatch[0];
-                    questionContent = questionContent.replace(imageUrl, '').trim();
-                }
-                // ------------------------------------
 
                 const jenisSoal = (columns[headerMap['Jenis Soal']] || 'Pilihan Ganda').trim();
                 const questionObj = {
                     no: columns[headerMap['No']] || (i + 1),
-                    question: questionContent, // Teks soal yang sudah bersih
-                    linkGambar: imageUrl, // URL gambar yang diekstrak
+                    question: questionContent,
+                    linkGambar: columns[headerMap['Link Gambar']] || '', // Kembali menggunakan kolom 'Link Gambar'
                 };
 
                 if (jenisSoal === 'Pilihan Ganda') {
