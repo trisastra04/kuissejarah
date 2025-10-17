@@ -93,7 +93,7 @@
             <div id="question-area">
                 <img id="question-image" src="" alt="Gambar Soal" class="max-w-full h-auto mx-auto mb-4 rounded-lg hidden">
                 <h2 id="question-text" class="text-lg md:text-xl font-semibold text-gray-700 mb-5" style="white-space: pre-wrap;">Memuat pertanyaan...</h2>
-                <div id="options-container" class="space-y-3"></div>
+                <div id="options-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
                 <div id="uraian-answer-area" class="hidden">
                     <label for="uraian-answer" class="block text-sm font-medium text-gray-700 mb-2">Jawaban Anda:</label>
                     <textarea id="uraian-answer" rows="5" class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"></textarea>
@@ -360,7 +360,7 @@
                 currentQuestion.options.forEach(option => {
                     const button = document.createElement('button');
                     button.textContent = option;
-                    button.classList.add('option-btn', 'w-full', 'text-left', 'p-4', 'my-2', 'rounded-lg', 'border', 'border-gray-300', 'hover:bg-gray-100', 'focus:outline-none', 'focus:ring-2', 'focus:ring-blue-400');
+                    button.classList.add('option-btn', 'w-full', 'text-left', 'p-4', 'rounded-lg', 'border', 'border-gray-300', 'hover:bg-gray-100', 'focus:outline-none', 'focus:ring-2', 'focus:ring-blue-400');
                     button.onclick = () => selectAnswer(option);
                     optionsContainer.appendChild(button);
                 });
