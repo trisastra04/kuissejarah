@@ -78,6 +78,15 @@
                 Mulai Kuis
             </button>
         </div>
+
+        <!-- Layar Siap Memulai -->
+        <div id="ready-screen" class="hidden text-center py-8">
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">Kuis Siap Dimulai!</h2>
+            <p class="text-gray-600 mb-6">Soal telah berhasil dimuat. Klik tombol di bawah untuk memulai dalam mode layar penuh.</p>
+            <button id="start-fullscreen-btn" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700">
+                Mulai Sekarang
+            </button>
+        </div>
         
         <div id="quiz-content" class="hidden">
             <!-- Header Kuis -->
@@ -140,6 +149,17 @@
         </div>
     </div>
 
+    <!-- Layar Peringatan Keluar Fokus -->
+    <div id="focus-warning-screen" class="hidden fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-xl p-8 text-center max-w-md">
+            <h2 class="text-2xl font-bold text-yellow-500 mb-4">Peringatan!</h2>
+            <p class="text-gray-700 mb-6">Anda telah keluar dari layar kuis. <br> Kuis dijeda hingga Anda kembali ke mode layar penuh.</p>
+            <button id="resume-quiz-btn" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                Lanjutkan Kuis
+            </button>
+        </div>
+    </div>
+
     <script>
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0T2PNb5JcU_yxE7GwfFOS_QsgmPfbQkQNWCtGnRrdUWqHn1-8420ZZjh4G2S_wAU/exec";
         const STUDENT_DATA_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQp3k-ZbcM47ZI5vT0NGhsfnUvEiyIGpITLQiVjpdtwInRFFZEFks0XJhm-LP2H15sN12ZqQxUx0sts/pub?gid=839083232&single=true&output=csv";
@@ -160,6 +180,8 @@
         const studentNameSelect = document.getElementById('student-name-select');
         const formError = document.getElementById('form-error');
         const startBtn = document.getElementById('start-btn');
+        const readyScreen = document.getElementById('ready-screen');
+        const startFullscreenBtn = document.getElementById('start-fullscreen-btn');
         const quizContent = document.getElementById('quiz-content');
         const quizTitle = document.getElementById('quiz-title');
         const questionImage = document.getElementById('question-image');
@@ -180,6 +202,8 @@
         const restartBtn = document.getElementById('restart-btn');
         const savingStatusPg = document.getElementById('saving-status-pg');
         const savingStatusUraian = document.getElementById('saving-status-uraian');
+        const focusWarningScreen = document.getElementById('focus-warning-screen');
+        const resumeQuizBtn = document.getElementById('resume-quiz-btn');
         
         // --- Variabel Status Kuis ---
         let currentQuestionIndex = 0;
@@ -187,9 +211,36 @@
         let studentName = "";
         let studentClass = "";
         let studentData = {};
-        let currentQuizSection = 'pilihanGanda'; 
+        let currentQuizSection = 'pilihanGanda';
+        let isQuizActive = false;
 
-        // --- Fungsi-fungsi ---
+        // --- Fungsi untuk Fullscreen & Anti-Curang ---
+        function enterFullscreen() {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen().catch(err => {
+                    console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+                });
+            } else if (elem.webkitRequestFullscreen) { /* Safari */
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) { /* IE11 */
+                elem.msRequestFullscreen();
+            }
+        }
+
+        function handleVisibilityChange() {
+            if (document.visibilityState === 'hidden' && isQuizActive) {
+                focusWarningScreen.classList.remove('hidden');
+            }
+        }
+
+        function handleFullscreenChange() {
+            if (!document.fullscreenElement && isQuizActive) {
+                focusWarningScreen.classList.remove('hidden');
+            }
+        }
+
+        // --- Fungsi-fungsi Kuis Lainnya ---
         async function fetchAndParseStudentData() {
             const response = await fetch(STUDENT_DATA_URL);
             if (!response.ok) throw new Error('Gagal mengambil data siswa');
@@ -235,7 +286,7 @@
                 const questionObj = {
                     no: columns[headerMap['No']] || (i + 1),
                     question: questionContent,
-                    linkGambar: columns[headerMap['Link Gambar']] || '', // Kembali menggunakan kolom 'Link Gambar'
+                    linkGambar: columns[headerMap['Link Gambar']] || '',
                 };
 
                 if (jenisSoal === 'Pilihan Ganda') {
@@ -278,6 +329,7 @@
         function initQuiz() {
             currentQuestionIndex = 0;
             score = 0;
+            isQuizActive = false;
             pilihanGandaQuestions = [];
             uraianQuestions = [];
             uraianAnswers = [];
@@ -285,6 +337,7 @@
             resultsScreen.classList.add('hidden');
             quizContent.classList.add('hidden');
             confirmationScreen.classList.add('hidden');
+            readyScreen.classList.add('hidden');
             startScreen.classList.remove('hidden');
             if (studentClassSelect.options.length > 1) { 
                  studentClassSelect.value = '';
@@ -321,11 +374,10 @@
                      formError.classList.remove('hidden');
                      throw new Error("No questions loaded");
                 }
-                currentQuizSection = pilihanGandaQuestions.length > 0 ? 'pilihanGanda' : 'uraian';
+                
                 startScreen.classList.add('hidden');
-                quizContent.classList.remove('hidden');
-                showQuestion();
-                updateScoreDisplay();
+                readyScreen.classList.remove('hidden');
+
             } catch (error) {
                 console.error("Error starting quiz:", error);
                 formError.textContent = "Gagal memuat soal kuis. Silakan coba lagi.";
@@ -410,6 +462,7 @@
         }
         
         function showResults() {
+            isQuizActive = false;
             quizContent.classList.add('hidden');
             confirmationScreen.classList.add('hidden');
             const totalPgQuestions = pilihanGandaQuestions.length;
@@ -480,6 +533,18 @@
         // --- Event Listeners ---
         studentClassSelect.addEventListener('change', (e) => populateNameDropdown(e.target.value));
         startBtn.addEventListener('click', startQuiz);
+        
+        startFullscreenBtn.addEventListener('click', () => {
+            enterFullscreen();
+            isQuizActive = true;
+            readyScreen.classList.add('hidden');
+            quizContent.classList.remove('hidden');
+            
+            currentQuizSection = pilihanGandaQuestions.length > 0 ? 'pilihanGanda' : 'uraian';
+            showQuestion();
+            updateScoreDisplay();
+        });
+
         nextBtn.addEventListener('click', () => {
             if (currentQuizSection === 'uraian') {
                 const answer = document.getElementById('uraian-answer').value;
@@ -510,6 +575,10 @@
 
         finishEarlyBtn.addEventListener('click', showResults);
         restartBtn.addEventListener('click', initQuiz);
+        resumeQuizBtn.addEventListener('click', () => {
+            focusWarningScreen.classList.add('hidden');
+            enterFullscreen();
+        });
 
         // --- Inisialisasi Aplikasi ---
         document.addEventListener('DOMContentLoaded', async () => {
@@ -522,6 +591,8 @@
                 console.error("Error during initialization:", error);
                 dataLoader.innerHTML = `<p class="text-red-500">Gagal memuat data siswa. Coba muat ulang halaman.</p>`;
             }
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+            document.addEventListener('fullscreenchange', handleFullscreenChange);
         });
     </script>
 </body>
