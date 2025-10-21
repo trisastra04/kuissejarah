@@ -221,15 +221,21 @@
 
         // --- Fungsi untuk Fullscreen & Anti-Curang ---
         function enterFullscreen() {
-            const elem = document.documentElement;
-            if (elem.requestFullscreen) {
-                elem.requestFullscreen().catch(err => {
-                    console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
-                });
-            } else if (elem.webkitRequestFullscreen) { /* Safari */
-                elem.webkitRequestFullscreen();
-            } else if (elem.msRequestFullscreen) { /* IE11 */
-                elem.msRequestFullscreen();
+            try {
+                const elem = document.documentElement;
+                if (elem.requestFullscreen) {
+                    // Request fullscreen and silently ignore any errors if the request is denied.
+                    elem.requestFullscreen().catch(() => {
+                        console.warn("Gagal masuk ke mode layar penuh. Fitur ini mungkin dibatasi oleh browser atau lingkungan Anda.");
+                    });
+                } else if (elem.webkitRequestFullscreen) { /* Safari */
+                    elem.webkitRequestFullscreen();
+                } else if (elem.msRequestFullscreen) { /* IE11 */
+                    elem.msRequestFullscreen();
+                }
+            } catch (e) {
+                // Silently ignore errors if fullscreen is not supported or blocked.
+                console.warn("Fullscreen API tidak didukung atau diblokir di lingkungan ini.");
             }
         }
 
@@ -266,24 +272,39 @@
             const csvText = await response.text();
             pilihanGandaQuestions = [];
             uraianQuestions = [];
-            
+
             const lines = csvText.trim().replace(/\r/g, '').split(/\n(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-            const headers = lines[0].split(',').map(h => h.trim());
+            
+            const headerLine = lines.shift() || '';
+            const regexParser = /(?:"([^"]*(?:""[^"]*)*)"|([^,]*))(,|$)/g;
+            const headers = [];
+            let headerMatch;
+            regexParser.lastIndex = 0;
+            while ((headerMatch = regexParser.exec(headerLine))) {
+                let value = headerMatch[1] !== undefined ? headerMatch[1].replace(/""/g, '"') : headerMatch[2];
+                headers.push(value.trim());
+                if (headerMatch[3] === '') break;
+            }
             const headerMap = headers.reduce((acc, h, i) => ({ ...acc, [h]: i }), {});
 
-            for (let i = 1; i < lines.length; i++) {
+            for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
                 if (!line.trim()) continue;
-                const regex = /(?:"([^"]*(?:""[^"]*)*)"|([^,]*))(,|$)/g;
+
                 const columns = [];
                 let match;
-                regex.lastIndex = 0; 
-                while ((match = regex.exec(line))) {
+                regexParser.lastIndex = 0;
+                while ((match = regexParser.exec(line))) {
                     let value = match[1] !== undefined ? match[1].replace(/""/g, '"') : match[2];
                     columns.push(value.trim());
                     if (match[3] === '') break;
                 }
 
+                if (columns.length < headers.length) {
+                    console.warn("Skipping malformed row:", line);
+                    continue;
+                }
+                
                 const questionContent = columns[headerMap['Soal']];
                 if (!questionContent || questionContent.length === 0) continue;
 
@@ -295,10 +316,12 @@
                 };
 
                 if (jenisSoal === 'Pilihan Ganda') {
-                    const options = [ 'Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E' ].map(key => columns[headerMap[key]]).filter(opt => opt && opt.length > 0);
+                    const options = [ 'Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E' ].map(key => headerMap[key] !== undefined ? columns[headerMap[key]] : undefined).filter(opt => opt && opt.length > 0);
                     const keyLetter = (columns[headerMap['Kunci Jawaban']] || '').toUpperCase();
                     let correctAnswerText = '';
-                    if (keyLetter) correctAnswerText = columns[headerMap[`Opsi ${keyLetter}`]];
+                    if (keyLetter && headerMap[`Opsi ${keyLetter}`] !== undefined) {
+                        correctAnswerText = columns[headerMap[`Opsi ${keyLetter}`]];
+                    }
                     Object.assign(questionObj, { options, correctAnswer: correctAnswerText, explanation: columns[headerMap['Pembahasan']], clue: "Periksa kembali setiap opsi dengan teliti." });
                     pilihanGandaQuestions.push(questionObj);
                 } else if (jenisSoal === 'Uraian') {
