@@ -160,7 +160,8 @@
     <div id="focus-warning-screen" class="hidden fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center z-50 p-4">
         <div class="bg-white rounded-2xl shadow-xl p-8 text-center max-w-md">
             <h2 class="text-2xl font-bold text-yellow-500 mb-4">Peringatan!</h2>
-            <p class="text-gray-700 mb-6">Anda telah keluar dari layar kuis. <br> Kuis dijeda hingga Anda kembali ke mode layar penuh.</p>
+            <p class="text-gray-700 mb-6">Anda telah keluar dari layar kuis. Harap segera kembali.</p>
+            <p id="countdown-timer" class="text-xl font-bold text-red-500 mb-6"></p>
             <button id="resume-quiz-btn" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
                 Lanjutkan Kuis
             </button>
@@ -223,6 +224,7 @@
         const savingStatusUraian = document.getElementById('saving-status-uraian');
         const focusWarningScreen = document.getElementById('focus-warning-screen');
         const resumeQuizBtn = document.getElementById('resume-quiz-btn');
+        const countdownTimerEl = document.getElementById('countdown-timer');
         
         // --- Variabel Status Kuis ---
         let currentQuestionIndex = 0;
@@ -233,6 +235,8 @@
         let studentData = {};
         let currentQuizSection = 'pilihanGanda';
         let isQuizActive = false;
+        let countdownInterval = null;
+        let countdownValue = 10;
 
         // --- Fungsi untuk Fullscreen & Anti-Curang ---
         function enterFullscreen() {
@@ -251,27 +255,42 @@
         }
 
         async function handleVisibilityChange() {
-            if (!isQuizActive) return;
-            const status = document.visibilityState === 'hidden' ? 'Beralih Tab' : 'Mengerjakan';
-            try {
-                await db.collection('quiz_sessions').doc(studentId).update({ status });
-                if (status === 'Beralih Tab') {
+            if (document.visibilityState === 'hidden' && isQuizActive) {
+                pauseQuizAndStartCountdown();
+                try {
+                    await db.collection('quiz_sessions').doc(studentId).update({ status: 'Beralih Tab' });
                     await db.collection('cheating_log').add({
                         name: studentName,
                         class: studentClass,
                         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                         examType: 'Sesi Pengerjaan Kuis'
                     });
+                } catch (error) {
+                    console.error("Gagal mengupdate status siswa:", error);
                 }
-            } catch (error) {
-                console.error("Gagal mengupdate status siswa:", error);
             }
         }
 
         function handleFullscreenChange() {
             if (!document.fullscreenElement && isQuizActive) {
-                focusWarningScreen.classList.remove('hidden');
+                pauseQuizAndStartCountdown();
             }
+        }
+
+        function pauseQuizAndStartCountdown() {
+            if (!isQuizActive || countdownInterval) return;
+
+            focusWarningScreen.classList.remove('hidden');
+            countdownValue = 10;
+            countdownTimerEl.textContent = `Waktu tersisa: ${countdownValue} detik`;
+
+            countdownInterval = setInterval(() => {
+                countdownValue--;
+                countdownTimerEl.textContent = `Waktu tersisa: ${countdownValue} detik`;
+                if (countdownValue <= 0) {
+                    showResults(); // End the quiz
+                }
+            }, 1000);
         }
 
         // --- Fungsi-fungsi Kuis Lainnya ---
@@ -553,13 +572,20 @@
         }
         
         async function showResults() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+            if (!isQuizActive) return; // Prevent multiple calls
             isQuizActive = false;
+            
             try {
                 await db.collection('quiz_sessions').doc(studentId).delete();
             } catch (error) {
                 console.error("Gagal menghapus sesi dari Firestore:", error);
             }
             
+            focusWarningScreen.classList.add('hidden');
             quizContent.classList.add('hidden');
             confirmationScreen.classList.add('hidden');
             const totalPgQuestions = pilihanGandaQuestions.length;
@@ -663,6 +689,8 @@
         finishEarlyBtn.addEventListener('click', showResults);
         restartBtn.addEventListener('click', initQuiz);
         resumeQuizBtn.addEventListener('click', () => {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
             focusWarningScreen.classList.add('hidden');
             enterFullscreen();
         });
@@ -692,3 +720,4 @@
     </script>
 </body>
 </html>
+
