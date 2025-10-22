@@ -8,6 +8,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Firebase v8 SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -28,7 +32,7 @@
         }
         .loader {
             border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
+            border-top: 4px solid #3b82f6;
             border-radius: 50%;
             width: 24px;
             height: 24px;
@@ -167,12 +171,22 @@
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz0T2PNb5JcU_yxE7GwfFOS_QsgmPfbQkQNWCtGnRrdUWqHn1-8420ZZjh4G2S_wAU/exec";
         const STUDENT_DATA_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQp3k-ZbcM47ZI5vT0NGhsfnUvEiyIGpITLQiVjpdtwInRFFZEFks0XJhm-LP2H15sN12ZqQxUx0sts/pub?gid=839083232&single=true&output=csv";
         
+        const firebaseConfig = {
+          apiKey: "AIzaSyBDIBFVUDSxN4Qs9HsHzvVac3NCTXBkDIg",
+          authDomain: "projek-kuis-42454.firebaseapp.com",
+          projectId: "projek-kuis-42454",
+          storageBucket: "projek-kuis-42454.appspot.com",
+          messagingSenderId: "230493914497",
+          appId: "1:230493914497:web:5ea60af2c77e8f2bcd1480"
+        };
+        
         const quizDataUrls = {
             'X': "https://docs.google.com/spreadsheets/d/e/2PACX-1vQp3k-ZbcM47ZI5vT0NGhsfnUvEiyIGpITLQiVjpdtwInRFFZEFks0XJhm-LP2H15sN12ZqQxUx0sts/pub?gid=586568774&single=true&output=csv",
             'XI': "https://docs.google.com/spreadsheets/d/e/2PACX-1vQp3k-ZbcM47ZI5vT0NGhsfnUvEiyIGpITLQiVjpdtwInRFFZEFks0XJhm-LP2H15sN12ZqQxUx0sts/pub?gid=397565300&single=true&output=csv",
             'XII': "https://docs.google.com/spreadsheets/d/e/2PACX-1vQp3k-ZbcM47ZI5vT0NGhsfnUvEiyIGpITLQiVjpdtwInRFFZEFks0XJhm-LP2H15sN12ZqQxUx0sts/pub?gid=183515394&single=true&output=csv"
         };
 
+        let db;
         let pilihanGandaQuestions = [];
         let uraianQuestions = [];
         let uraianAnswers = [];
@@ -215,33 +229,42 @@
         let score = 0;
         let studentName = "";
         let studentClass = "";
+        let studentId = ""; // Unique ID for Firestore document
         let studentData = {};
         let currentQuizSection = 'pilihanGanda';
         let isQuizActive = false;
 
         // --- Fungsi untuk Fullscreen & Anti-Curang ---
         function enterFullscreen() {
-            try {
+             try {
                 const elem = document.documentElement;
                 if (elem.requestFullscreen) {
-                    // Request fullscreen and silently ignore any errors if the request is denied.
-                    elem.requestFullscreen().catch(() => {
-                        console.warn("Gagal masuk ke mode layar penuh. Fitur ini mungkin dibatasi oleh browser atau lingkungan Anda.");
-                    });
-                } else if (elem.webkitRequestFullscreen) { /* Safari */
+                    elem.requestFullscreen().catch(() => {});
+                } else if (elem.webkitRequestFullscreen) {
                     elem.webkitRequestFullscreen();
-                } else if (elem.msRequestFullscreen) { /* IE11 */
+                } else if (elem.msRequestFullscreen) {
                     elem.msRequestFullscreen();
                 }
             } catch (e) {
-                // Silently ignore errors if fullscreen is not supported or blocked.
-                console.warn("Fullscreen API tidak didukung atau diblokir di lingkungan ini.");
+                console.warn("Fullscreen API tidak didukung atau diblokir.");
             }
         }
 
-        function handleVisibilityChange() {
-            if (document.visibilityState === 'hidden' && isQuizActive) {
-                focusWarningScreen.classList.remove('hidden');
+        async function handleVisibilityChange() {
+            if (!isQuizActive) return;
+            const status = document.visibilityState === 'hidden' ? 'Beralih Tab' : 'Mengerjakan';
+            try {
+                await db.collection('quiz_sessions').doc(studentId).update({ status });
+                if (status === 'Beralih Tab') {
+                    await db.collection('cheating_log').add({
+                        name: studentName,
+                        class: studentClass,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                        examType: 'Sesi Pengerjaan Kuis'
+                    });
+                }
+            } catch (error) {
+                console.error("Gagal mengupdate status siswa:", error);
             }
         }
 
@@ -272,7 +295,7 @@
             const csvText = await response.text();
             pilihanGandaQuestions = [];
             uraianQuestions = [];
-
+            
             const lines = csvText.trim().replace(/\r/g, '').split(/\n(?=(?:(?:[^"]*"){2})*[^"]*$)/);
             
             const headerLine = lines.shift() || '';
@@ -300,10 +323,7 @@
                     if (match[3] === '') break;
                 }
 
-                if (columns.length < headers.length) {
-                    console.warn("Skipping malformed row:", line);
-                    continue;
-                }
+                if (columns.length < headers.length) continue;
                 
                 const questionContent = columns[headerMap['Soal']];
                 if (!questionContent || questionContent.length === 0) continue;
@@ -381,18 +401,15 @@
                 formError.classList.remove('hidden');
                 return;
             }
+            studentId = `${studentClass}_${studentName}`.replace(/\s+/g, '_');
             formError.classList.add('hidden');
             startBtn.disabled = true;
             startBtn.innerHTML = '<div class="loader"></div> <span>Memuat soal...</span>';
 
             let classGroup = '';
-            if (studentClass.startsWith('Kelas XII')) {
-                classGroup = 'XII';
-            } else if (studentClass.startsWith('Kelas XI')) {
-                classGroup = 'XI';
-            } else if (studentClass.startsWith('Kelas X')) {
-                classGroup = 'X';
-            }
+            if (studentClass.startsWith('Kelas XII')) classGroup = 'XII';
+            else if (studentClass.startsWith('Kelas XI')) classGroup = 'XI';
+            else if (studentClass.startsWith('Kelas X')) classGroup = 'X';
             
             const quizUrl = quizDataUrls[classGroup];
 
@@ -421,6 +438,43 @@
             } finally {
                 startBtn.disabled = false;
                 startBtn.innerHTML = 'Mulai Kuis';
+            }
+        }
+        
+        async function beginQuizSession() {
+            enterFullscreen();
+            isQuizActive = true;
+            readyScreen.classList.add('hidden');
+            quizContent.classList.remove('hidden');
+            
+            currentQuizSection = pilihanGandaQuestions.length > 0 ? 'pilihanGanda' : 'uraian';
+            showQuestion();
+            updateScoreDisplay();
+
+            try {
+                await db.collection('quiz_sessions').doc(studentId).set({
+                    name: studentName,
+                    class: studentClass,
+                    status: 'Mengerjakan',
+                    progress: '0%'
+                });
+            } catch (error) {
+                console.error("Gagal memulai sesi di Firestore:", error);
+            }
+        }
+
+        async function updateQuizProgress() {
+            if (!isQuizActive) return;
+            const totalQuestions = pilihanGandaQuestions.length + uraianQuestions.length;
+            const completedQuestions = currentQuizSection === 'pilihanGanda' ? currentQuestionIndex : pilihanGandaQuestions.length + currentQuestionIndex;
+            const progress = totalQuestions > 0 ? Math.round((completedQuestions / totalQuestions) * 100) : 0;
+
+            try {
+                await db.collection('quiz_sessions').doc(studentId).update({
+                    progress: `${progress}%`
+                });
+            } catch (error) {
+                console.error("Gagal mengupdate progres:", error);
             }
         }
 
@@ -460,6 +514,7 @@
                 document.getElementById('uraian-answer').value = '';
                 nextBtn.classList.remove('hidden');
             }
+            updateQuizProgress();
         }
 
         function selectAnswer(selectedOption) {
@@ -497,8 +552,14 @@
             scoreText.textContent = `Skor: ${score}`;
         }
         
-        function showResults() {
+        async function showResults() {
             isQuizActive = false;
+            try {
+                await db.collection('quiz_sessions').doc(studentId).delete();
+            } catch (error) {
+                console.error("Gagal menghapus sesi dari Firestore:", error);
+            }
+            
             quizContent.classList.add('hidden');
             confirmationScreen.classList.add('hidden');
             const totalPgQuestions = pilihanGandaQuestions.length;
@@ -569,17 +630,7 @@
         // --- Event Listeners ---
         studentClassSelect.addEventListener('change', (e) => populateNameDropdown(e.target.value));
         startBtn.addEventListener('click', startQuiz);
-        
-        startFullscreenBtn.addEventListener('click', () => {
-            enterFullscreen();
-            isQuizActive = true;
-            readyScreen.classList.add('hidden');
-            quizContent.classList.remove('hidden');
-            
-            currentQuizSection = pilihanGandaQuestions.length > 0 ? 'pilihanGanda' : 'uraian';
-            showQuestion();
-            updateScoreDisplay();
-        });
+        startFullscreenBtn.addEventListener('click', beginQuizSession);
 
         nextBtn.addEventListener('click', () => {
             if (currentQuizSection === 'uraian') {
@@ -616,21 +667,28 @@
             enterFullscreen();
         });
 
-        // --- Inisialisasi Aplikasi ---
-        document.addEventListener('DOMContentLoaded', async () => {
-            initQuiz();
+        // --- Init App ---
+        async function initializeApp() {
             try {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                await firebase.auth().signInAnonymously();
+                console.log("Firebase Authenticated Anonymously");
+                
                 await fetchAndParseStudentData();
                 dataLoader.classList.add('hidden');
                 studentForm.classList.remove('hidden');
-            } catch (error) {
-                console.error("Error during initialization:", error);
-                dataLoader.innerHTML = `<p class="text-red-500">Gagal memuat data siswa. Coba muat ulang halaman.</p>`;
+
+                document.addEventListener('visibilitychange', handleVisibilityChange);
+                document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+            } catch(e) {
+                console.error("Firebase Initialization Error:", e);
+                document.body.innerHTML = `<div class="p-8 text-center text-red-600">Gagal menginisialisasi aplikasi. Periksa konfigurasi Firebase Anda.<br><small>${e.message}</small></div>`;
             }
-            document.addEventListener('visibilitychange', handleVisibilityChange);
-            document.addEventListener('fullscreenchange', handleFullscreenChange);
-        });
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeApp);
     </script>
 </body>
 </html>
-
