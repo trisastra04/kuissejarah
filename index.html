@@ -21,10 +21,23 @@
         }
         .option-btn:disabled {
             cursor: not-allowed;
+            background-color: #f3f4f6; /* Gray 100 for disabled */
+             border-color: #d1d5db; /* Gray 300 for disabled */
+             opacity: 0.7;
         }
          .selected-answer {
              background-color: #e0e7ff; /* Indigo 100 */
              border-color: #6366f1; /* Indigo 500 */
+             font-weight: 500;
+         }
+        /* Style when options are locked after confirming */
+         .option-btn.locked.correct {
+             background-color: #dcfce7; /* Green 100 */
+             border-color: #22c55e; /* Green 500 */
+         }
+         .option-btn.locked.incorrect {
+             background-color: #fee2e2; /* Red 100 */
+             border-color: #ef4444; /* Red 500 */
          }
         .loader {
             border: 4px solid #f3f3f3;
@@ -40,7 +53,7 @@
             background-color: #e9ecef;
             cursor: not-allowed;
         }
-        #start-btn:disabled, #verify-code-btn:disabled {
+        #start-btn:disabled, #verify-code-btn:disabled, #next-btn:disabled {
             background-color: #93c5fd; /* blue-300 */
             cursor: not-allowed;
         }
@@ -130,8 +143,8 @@
             
             <!-- Tombol Navigasi -->
             <div class="mt-8 text-right">
-                <button id="next-btn" class="hidden bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 transition-transform transform hover:scale-105">
-                    Soal Berikutnya
+                <button id="next-btn" disabled class="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 transition-transform transform hover:scale-105">
+                    Soal Berikutnya <!-- Text will change -->
                 </button>
             </div>
         </div>
@@ -197,6 +210,7 @@
         };
 
         let db;
+        let sessionStatusUnsubscribe = null; // Listener for session status
         let allPilihanGandaQuestions = []; // Store all questions before slicing/shuffling
         let allUraianQuestions = [];
         let pilihanGandaQuestions = []; // Questions to be displayed
@@ -249,6 +263,7 @@
         // --- Variabel Status Kuis ---
         let currentQuestionIndex = 0;
         let score = 0; // Tetap menghitung skor internal
+        let currentSelectedAnswer = null; // Menyimpan jawaban terpilih sementara
         let studentName = "";
         let studentClass = "";
         let studentId = ""; // Unique ID for Firestore document (class_name)
@@ -354,6 +369,21 @@
              const minutes = Math.floor(quizTimeRemaining / 60);
              const seconds = quizTimeRemaining % 60;
              timeLeftEl.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+         }
+
+         // --- Listen to Force End Signal ---
+         function listenForceEndSignal() {
+             const docRef = db.collection('quiz_controls').doc('session_status');
+             
+             sessionStatusUnsubscribe = docRef.onSnapshot((doc) => {
+                 // Hanya akhiri jika kuis sedang aktif (isQuizActive)
+                 if (isQuizActive && doc.exists && doc.data().forceEnd === true) {
+                     console.log("Sinyal paksa akhir diterima!");
+                     showResults(); // Akhiri kuis jika flag true
+                 }
+             }, (error) => {
+                 console.error("Gagal mendengarkan sinyal paksa akhir:", error);
+             });
          }
 
         // --- Fungsi-fungsi Kuis Lainnya ---
@@ -531,6 +561,7 @@
             pilihanGandaQuestions = [];
             uraianQuestions = [];
             uraianAnswers = [];
+            currentSelectedAnswer = null; // Reset selected answer
             currentQuizSection = 'pilihanGanda';
             resultsScreen.classList.add('hidden');
             quizContent.classList.add('hidden');
@@ -548,6 +579,11 @@
             quizTimerInterval = null;
             if (countdownInterval) clearInterval(countdownInterval); // Hentikan countdown jika ada
             countdownInterval = null;
+             // Unsubscribe from listener if it exists
+            if (sessionStatusUnsubscribe) {
+                 sessionStatusUnsubscribe();
+                 sessionStatusUnsubscribe = null;
+            }
 
             if (studentClassSelect.options.length > 1) { 
                  studentClassSelect.value = '';
@@ -674,6 +710,9 @@
                  } else {
                      timerDisplay.classList.add('hidden');
                  }
+                
+                 // Start listening for force end signal
+                 listenForceEndSignal();
 
                  // Now show the question, which will trigger the first progress update
                 showQuestion(); 
@@ -702,7 +741,8 @@
 
 
         function showQuestion() {
-            nextBtn.classList.add('hidden');
+            nextBtn.disabled = true; // Disable next btn until an answer is selected (for PG)
+            currentSelectedAnswer = null; // Reset selected answer for the new question
             const currentQuestions = currentQuizSection === 'pilihanGanda' ? pilihanGandaQuestions : uraianQuestions;
              if (currentQuestionIndex >= currentQuestions.length) {
                  console.warn("Attempted to show question with invalid index.");
@@ -723,6 +763,18 @@
             const currentDisplayIndex = currentQuizSection === 'pilihanGanda' ? currentQuestionIndex + 1 : pilihanGandaQuestions.length + currentQuestionIndex + 1;
             progressText.textContent = `Soal ${currentDisplayIndex} dari ${totalQuestions}`;
 
+            // --- Logika Tombol Selesai ---
+            const isLastPgQuestion = currentQuizSection === 'pilihanGanda' && currentQuestionIndex === pilihanGandaQuestions.length - 1;
+            const isLastUrQuestion = currentQuizSection === 'uraian' && currentQuestionIndex === uraianQuestions.length - 1;
+            const hasUrQuestions = uraianQuestions.length > 0;
+
+            if ((isLastPgQuestion && !hasUrQuestions) || isLastUrQuestion) {
+                nextBtn.textContent = 'Selesaikan Kuis';
+            } else {
+                nextBtn.textContent = 'Soal Berikutnya';
+            }
+            // -----------------------------
+
             if (currentQuizSection === 'pilihanGanda') {
                 quizTitle.textContent = "Bagian Pilihan Ganda";
                 optionsContainer.classList.remove('hidden');
@@ -731,36 +783,31 @@
                 currentQuestion.options.forEach(option => {
                     const button = document.createElement('button');
                     button.textContent = option;
-                    button.classList.add('option-btn', 'w-full', 'text-left', 'p-4', 'rounded-lg', 'border', 'border-gray-300', 'hover:bg-gray-100', 'focus:outline-none', 'focus:ring-2', 'focus:ring-blue-400');
+                    button.classList.add('option-btn', 'w-full', 'text-left', 'p-4', 'rounded-lg', 'border', 'border-gray-300', 'hover:bg-gray-100', 'focus:outline-none', 'focus:ring-2', 'focus:ring-blue-400', 'transition-colors');
                     button.onclick = () => selectAnswer(button, option); // Pass button element
                     optionsContainer.appendChild(button);
                 });
+                 nextBtn.classList.remove('hidden'); // Show next button but disabled
             } else {
                 quizTitle.textContent = "Bagian Uraian";
                 optionsContainer.classList.add('hidden');
                 uraianAnswerArea.classList.remove('hidden');
                 document.getElementById('uraian-answer').value = '';
-                nextBtn.classList.remove('hidden');
+                nextBtn.disabled = false; // Enable next button for essay
+                nextBtn.classList.remove('hidden'); // Show next button immediately for essay
             }
             updateQuizProgress(); // Update progress after showing question content
         }
 
         function selectAnswer(selectedButton, selectedOption) {
-            const currentQuestion = pilihanGandaQuestions[currentQuestionIndex];
-            const isCorrect = selectedOption === currentQuestion.correctAnswer;
-            
-            if (isCorrect) {
-                score++; // Hitung skor secara internal
-            }
-            
-            document.querySelectorAll('.option-btn').forEach(btn => {
-                btn.disabled = true;
-                btn.classList.remove('hover:bg-gray-100'); 
-            });
-
-            selectedButton.classList.add('selected-answer'); 
-
-            nextBtn.classList.remove('hidden'); // Langsung tampilkan tombol Next
+             // Remove highlight from previously selected button
+             document.querySelectorAll('.option-btn.selected-answer').forEach(btn => {
+                 btn.classList.remove('selected-answer');
+             });
+             // Highlight the new selection
+             selectedButton.classList.add('selected-answer');
+             currentSelectedAnswer = selectedOption; // Store the selected option text
+             nextBtn.disabled = false; // Enable the next button
         }
         
         async function showResults() {
@@ -772,6 +819,11 @@
             }
             if (!isQuizActive) return; 
             isQuizActive = false;
+             // Unsubscribe from force end listener
+            if (sessionStatusUnsubscribe) {
+                 sessionStatusUnsubscribe();
+                 sessionStatusUnsubscribe = null;
+            }
             
             await recordAttempt(); // Catat percobaan setelah selesai
 
@@ -788,7 +840,8 @@
             confirmationScreen.classList.add('hidden');
             
             const totalPgQuestions = pilihanGandaQuestions.length;
-            const wrongAnswers = totalPgQuestions - score;
+            // Calculate score based on saved answers if needed later, using `score` variable for now
+            const wrongAnswers = totalPgQuestions - score; 
             const finalScoreValue = totalPgQuestions > 0 ? Math.round((score / totalPgQuestions) * 100) : 0; 
             
             correctCountEl.textContent = `${score}`; 
@@ -917,21 +970,46 @@
         startFullscreenBtn.addEventListener('click', beginQuizSession);
 
         nextBtn.addEventListener('click', () => {
-            if (currentQuizSection === 'uraian') {
+             // Lock the selected answer visual state if it's a multiple choice question
+            if (currentQuizSection === 'pilihanGanda' && currentSelectedAnswer) {
+                const currentQuestion = pilihanGandaQuestions[currentQuestionIndex];
+                const isCorrect = currentSelectedAnswer === currentQuestion.correctAnswer;
+                 // Add locked state classes (optional, for visual feedback after confirmation)
+                 document.querySelectorAll('.option-btn').forEach(btn => {
+                     btn.disabled = true; // Disable all options
+                     btn.classList.add('locked'); // Add a general locked class
+                    // Optionally add correct/incorrect after locking
+                    // if (btn.textContent === currentQuestion.correctAnswer) btn.classList.add('correct');
+                    // else if (btn.textContent === currentSelectedAnswer) btn.classList.add('incorrect');
+                 });
+                 // Recalculate score based on the final selected answer
+                 if (isCorrect) {
+                    // score++; // Score is already incremented in selectAnswer
+                 } else {
+                    // Adjust score if needed, e.g., if score was added prematurely
+                 }
+            } else if (currentQuizSection === 'uraian') {
                 const answer = document.getElementById('uraian-answer').value;
                 uraianAnswers.push({ no: uraianQuestions[currentQuestionIndex].no, answer: answer });
             }
+
+
+            // Logic for moving to the next question or screen
+            if (nextBtn.textContent === 'Selesaikan Kuis') {
+                 showResults();
+                 return; 
+             }
 
             currentQuestionIndex++;
             const currentQuestions = currentQuizSection === 'pilihanGanda' ? pilihanGandaQuestions : uraianQuestions;
             if (currentQuestionIndex < currentQuestions.length) {
                 showQuestion();
-            } else {
+            } else { // Akhir sesi saat ini
                 if (currentQuizSection === 'pilihanGanda' && uraianQuestions.length > 0) {
                     quizContent.classList.add('hidden');
                     confirmationScreen.classList.remove('hidden');
                 } else {
-                    showResults();
+                    showResults(); 
                 }
             }
         });
