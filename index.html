@@ -21,23 +21,20 @@
         }
         .option-btn:disabled {
             cursor: not-allowed;
-            /* Don't visually indicate correct/wrong immediately */
-            /* background-color: #f3f4f6; */
-            /* border-color: #d1d5db; */
         }
          .selected-answer {
              background-color: #e0e7ff; /* Indigo 100 */
              border-color: #6366f1; /* Indigo 500 */
              font-weight: 500;
+             position: relative;
          }
-        /* Style when options are locked after confirming */
-         .option-btn.locked.correct {
-             background-color: #dcfce7; /* Green 100 */
-             border-color: #22c55e; /* Green 500 */
-         }
-         .option-btn.locked.incorrect {
-             background-color: #fee2e2; /* Red 100 */
-             border-color: #ef4444; /* Red 500 */
+         /* Add checkmark for MCMA selected items */
+         .selected-answer::after {
+             content: '✓';
+             position: absolute;
+             right: 1rem;
+             color: #6366f1;
+             font-weight: bold;
          }
         .loader {
             border: 4px solid #f3f3f3;
@@ -124,6 +121,7 @@
                  <div>
                     <h1 id="quiz-title" class="text-xl md:text-2xl font-bold text-gray-800">Bagian Pilihan Ganda</h1>
                     <p id="progress-text" class="font-semibold text-sm text-gray-600"></p>
+                    <p id="mcma-hint" class="text-xs text-blue-600 font-medium hidden mt-1">⚠️ Pilih lebih dari satu jawaban</p>
                  </div>
                  <div id="timer-display" class="hidden text-right font-semibold text-lg text-red-600">
                      Sisa Waktu: <span id="time-left">00:00</span>
@@ -210,14 +208,14 @@
         };
 
         let db;
-        let sessionStatusUnsubscribe = null; // Listener for session status
-        let allPilihanGandaQuestions = []; // Store all questions before slicing/shuffling
+        let sessionStatusUnsubscribe = null; 
+        let allPilihanGandaQuestions = []; 
         let allUraianQuestions = [];
-        let pilihanGandaQuestions = []; // Questions to be displayed
+        let pilihanGandaQuestions = []; 
         let uraianQuestions = [];
         let uraianAnswers = [];
-        let quizConfig = { numQuestions: null, shuffle: false, useTimer: false, timerDuration: null }; // Default config
-        let accessCodes = {}; // To store class access codes
+        let quizConfig = { numQuestions: null, shuffle: false, useTimer: false, timerDuration: null }; 
+        let accessCodes = {}; 
 
         // --- Elemen DOM ---
         const startScreen = document.getElementById('start-screen');
@@ -231,13 +229,14 @@
         const nameSection = document.getElementById('name-section');
         const studentNameSelect = document.getElementById('student-name-select');
         const formError = document.getElementById('form-error');
-        const attemptError = document.getElementById('attempt-error'); // Error for existing attempt
+        const attemptError = document.getElementById('attempt-error'); 
         const startBtn = document.getElementById('start-btn');
         const readyScreen = document.getElementById('ready-screen');
         const readyMessage = document.getElementById('ready-message');
         const startFullscreenBtn = document.getElementById('start-fullscreen-btn');
         const quizContent = document.getElementById('quiz-content');
         const quizTitle = document.getElementById('quiz-title');
+        const mcmaHint = document.getElementById('mcma-hint'); // New element for MCMA hint
         const timerDisplay = document.getElementById('timer-display');
         const timeLeftEl = document.getElementById('time-left');
         const questionImage = document.getElementById('question-image');
@@ -246,7 +245,6 @@
         const uraianAnswerArea = document.getElementById('uraian-answer-area');
         const nextBtn = document.getElementById('next-btn');
         const progressText = document.getElementById('progress-text');
-        // const scoreText = document.getElementById('score-text'); // Dihilangkan
         const confirmationScreen = document.getElementById('confirmation-screen');
         const continueUraianBtn = document.getElementById('continue-uraian-btn');
         const finishEarlyBtn = document.getElementById('finish-early-btn');
@@ -262,20 +260,64 @@
         
         // --- Variabel Status Kuis ---
         let currentQuestionIndex = 0;
-        let score = 0; // Tetap menghitung skor internal
-        let currentSelectedAnswer = null; // Menyimpan jawaban terpilih sementara
+        let score = 0; 
+        let currentSelectedAnswers = []; // Changed to array for MCMA
         let studentName = "";
         let studentClass = "";
-        let studentId = ""; // Unique ID for Firestore document (class_name)
+        let studentId = ""; 
         let studentData = {};
         let currentQuizSection = 'pilihanGanda';
         let isQuizActive = false;
-        let isCodeVerified = false; // Flag for access code verification
-        let isSubmitting = false; // Flag to prevent multiple submissions
+        let isCodeVerified = false; 
+        let isSubmitting = false; 
         let countdownInterval = null;
         let countdownValue = 10;
         let quizTimerInterval = null;
-        let quizTimeRemaining = 0; // in seconds
+        let quizTimeRemaining = 0; 
+
+        // --- Helper Function: Robust CSV Parsing ---
+        const parseCSV = (text) => {
+            const lines = text.trim().replace(/\r\n/g, '\n').split('\n'); 
+            if (lines.length < 1) return [];
+
+            const headerLine = lines.shift();
+            const regexParser = /(?:"([^"]*(?:""[^"]*)*)"|([^,]*))(,|$)/g;
+            const headers = [];
+            let headerMatch;
+            regexParser.lastIndex = 0;
+            while ((headerMatch = regexParser.exec(headerLine))) {
+                let value = headerMatch[1] !== undefined ? headerMatch[1].replace(/""/g, '"') : headerMatch[2];
+                headers.push(value.trim());
+                if (headerMatch[3] === '') break;
+            }
+
+            const results = [];
+            
+            let currentLine = "";
+            let inQuotes = false;
+            
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+                currentLine += (currentLine ? "\n" : "") + line;
+                
+                let quoteCount = (currentLine.match(/"/g) || []).length;
+                if (quoteCount % 2 === 0) {
+                    const columns = [];
+                    let match;
+                    regexParser.lastIndex = 0;
+                    while ((match = regexParser.exec(currentLine))) {
+                        let value = match[1] !== undefined ? match[1].replace(/""/g, '"') : match[2];
+                        columns.push(value.trim());
+                        if (match[3] === '') break;
+                    }
+                    results.push(columns);
+                    currentLine = ""; 
+                }
+            }
+
+            return { headers, data: results };
+        };
+
 
         // --- Fungsi untuk Fullscreen & Anti-Curang ---
         function enterFullscreen() {
@@ -340,7 +382,7 @@
                 if (countdownValue <= 0) {
                     clearInterval(countdownInterval); 
                     countdownInterval = null;
-                    showResults(); // End the quiz
+                    showResults(); 
                 }
             }, 1000);
         }
@@ -357,7 +399,7 @@
                  if (quizTimeRemaining <= 0) {
                      clearInterval(quizTimerInterval); 
                      quizTimerInterval = null;
-                     showResults(); // Waktu habis, akhiri kuis
+                     showResults(); 
                  }
              }, 1000);
          }
@@ -373,10 +415,9 @@
              const docRef = db.collection('quiz_controls').doc('session_status');
              
              sessionStatusUnsubscribe = docRef.onSnapshot((doc) => {
-                 // Hanya akhiri jika kuis sedang aktif (isQuizActive)
                  if (isQuizActive && doc.exists && doc.data().forceEnd === true) {
                      console.log("Sinyal paksa akhir diterima!");
-                     showResults(); // Akhiri kuis jika flag true
+                     showResults(); 
                  }
              }, (error) => {
                  console.error("Gagal mendengarkan sinyal paksa akhir:", error);
@@ -394,30 +435,31 @@
                 if (!studentRes.ok) throw new Error('Gagal mengambil data siswa');
                 if (!codeRes.ok) throw new Error('Gagal mengambil data kode akses');
 
-                // Parse student data
-                const studentCsvText = await studentRes.text();
-                const studentLines = studentCsvText.trim().replace(/\r/g, '').split('\n');
-                const studentHeaders = studentLines[0].split(',').map(h => h.trim());
+                const studentParsed = parseCSV(await studentRes.text());
+                const studentHeaders = studentParsed.headers;
+                const studentRows = studentParsed.data;
+
                 studentHeaders.forEach(header => { if(header) studentData[header] = []; });
-                for (let i = 1; i < studentLines.length; i++) {
-                    const names = studentLines[i].split(',').map(n => n.trim());
-                    names.forEach((name, j) => { if (name && studentHeaders[j]) studentData[studentHeaders[j]].push(name); });
-                }
+                studentRows.forEach(row => {
+                     studentHeaders.forEach((header, index) => {
+                         if(row[index]) studentData[header].push(row[index]);
+                     });
+                });
                 populateClassDropdown();
 
-                // Parse access code data
-                const codeCsvText = await codeRes.text();
-                const codeLines = codeCsvText.trim().replace(/\r/g, '').split('\n');
-                const codeHeaders = codeLines[0].split(',').map(h => h.trim());
-                if (codeLines.length > 1) { 
-                    const codes = codeLines[1].split(',').map(c => c.trim());
+                const codeParsed = parseCSV(await codeRes.text());
+                const codeHeaders = codeParsed.headers;
+                const codeRows = codeParsed.data;
+
+                if (codeRows.length > 0) {
+                    const codes = codeRows[0]; 
                     codeHeaders.forEach((header, index) => {
                         if (header) {
-                            accessCodes[header] = codes[index];
+                            accessCodes[header] = codes[index] ? codes[index].trim() : ""; 
                         }
                     });
                 }
-                console.log("Kode Akses Dimuat:", accessCodes); 
+                console.log("Kode Akses Dimuat (Cleaned):", accessCodes); 
 
              } catch (error) {
                  console.error("Error during initialization:", error);
@@ -437,53 +479,49 @@
             if (!response.ok) throw new Error('Gagal mengambil data kuis');
             const csvText = await response.text();
             
-            const lines = csvText.trim().replace(/\r/g, '').split(/\n(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-            
-            const headerLine = lines.shift() || '';
-            const regexParser = /(?:"([^"]*(?:""[^"]*)*)"|([^,]*))(,|$)/g;
-            const headers = [];
-            let headerMatch;
-            regexParser.lastIndex = 0;
-            while ((headerMatch = regexParser.exec(headerLine))) {
-                let value = headerMatch[1] !== undefined ? headerMatch[1].replace(/""/g, '"') : headerMatch[2];
-                headers.push(value.trim());
-                if (headerMatch[3] === '') break;
-            }
+            const parsed = parseCSV(csvText);
+            const headers = parsed.headers;
+            const rows = parsed.data;
             const headerMap = headers.reduce((acc, h, i) => ({ ...acc, [h]: i }), {});
 
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                if (!line.trim()) continue;
-
-                const columns = [];
-                let match;
-                regexParser.lastIndex = 0;
-                while ((match = regexParser.exec(line))) {
-                    let value = match[1] !== undefined ? match[1].replace(/""/g, '"') : match[2];
-                    columns.push(value.trim());
-                    if (match[3] === '') break;
-                }
-
+            for (const columns of rows) {
                 if (columns.length < headers.length) continue;
                 
                 const questionContent = columns[headerMap['Soal']];
                 if (!questionContent || questionContent.length === 0) continue;
 
                 const jenisSoal = (columns[headerMap['Jenis Soal']] || 'Pilihan Ganda').trim();
+                const rawKey = columns[headerMap['Kunci Jawaban']] || '';
+                
                 const questionObj = {
-                    no: columns[headerMap['No']] || (i + 1),
+                    no: columns[headerMap['No']] || '', 
                     question: questionContent,
                     linkGambar: columns[headerMap['Link Gambar']] || '',
+                    // Store keys as array for MCMA support
+                    correctKeys: rawKey.split(',').map(k => k.trim().toUpperCase())
                 };
 
-                if (jenisSoal === 'Pilihan Ganda') {
-                    const options = [ 'Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E' ].map(key => headerMap[key] !== undefined ? columns[headerMap[key]] : undefined).filter(opt => opt && opt.length > 0);
-                    const keyLetter = (columns[headerMap['Kunci Jawaban']] || '').toUpperCase();
-                    let correctAnswerText = '';
-                    if (keyLetter && headerMap[`Opsi ${keyLetter}`] !== undefined) {
-                        correctAnswerText = columns[headerMap[`Opsi ${keyLetter}`]];
-                    }
-                    Object.assign(questionObj, { options, correctAnswer: correctAnswerText, explanation: columns[headerMap['Pembahasan']], clue: "Periksa kembali setiap opsi dengan teliti." });
+                if (jenisSoal === 'Pilihan Ganda' || jenisSoal === 'MCMA') {
+                    questionObj.isMCMA = (jenisSoal === 'MCMA');
+                    
+                    const options = [ 'Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E' ]
+                        .map(key => headerMap[key] !== undefined ? columns[headerMap[key]] : undefined)
+                        .filter(opt => opt && opt.length > 0);
+                    
+                    // Map values back to letters A,B,C... if needed, but here we store the text
+                    // For verification we compare Selected Option Letter vs Key Letter (stored in correctKeys)
+                    
+                    // Also store options with their labels for easier checking
+                    questionObj.optionMap = {};
+                    ['A','B','C','D','E'].forEach((label, idx) => {
+                        if(options[idx]) questionObj.optionMap[label] = options[idx];
+                    });
+
+                    Object.assign(questionObj, { 
+                        options: options, // Array of strings
+                        explanation: columns[headerMap['Pembahasan']], 
+                        clue: "Periksa kembali setiap opsi dengan teliti." 
+                    });
                     allPilihanGandaQuestions.push(questionObj); 
                 } else if (jenisSoal === 'Uraian') {
                     allUraianQuestions.push(questionObj); 
@@ -552,11 +590,11 @@
             score = 0;
             isQuizActive = false;
             isCodeVerified = false; 
-            isSubmitting = false; // Reset submitting flag
+            isSubmitting = false; 
             pilihanGandaQuestions = [];
             uraianQuestions = [];
             uraianAnswers = [];
-            currentSelectedAnswer = null; 
+            currentSelectedAnswers = []; // Reset
             currentQuizSection = 'pilihanGanda';
             resultsScreen.classList.add('hidden');
             quizContent.classList.add('hidden');
@@ -588,6 +626,7 @@
         async function startQuiz() {
             studentClass = studentClassSelect.value;
             studentName = studentNameSelect.value;
+            
             if (!studentClass || !studentName || !isCodeVerified) { 
                 formError.textContent = "Harap pilih Kelas, verifikasi Kode Akses, dan pilih Nama!";
                 formError.classList.remove('hidden');
@@ -669,8 +708,7 @@
                 formError.textContent = "Gagal memuat soal kuis. Silakan coba lagi.";
                 formError.classList.remove('hidden');
             } finally {
-                 // Re-enable start button only if no attempt exists and code is verified
-                if (isCodeVerified && !(await checkExistingAttempt())) {
+                 if (isCodeVerified && !(await checkExistingAttempt())) {
                      startBtn.disabled = false;
                 }
                 startBtn.innerHTML = 'Mulai Kuis';
@@ -726,8 +764,9 @@
 
 
         function showQuestion() {
-            nextBtn.disabled = true; // Disable next btn until an answer is selected (for PG)
-            currentSelectedAnswer = null; // Reset selected answer for the new question
+            nextBtn.disabled = true; 
+            currentSelectedAnswers = []; // Reset for new question
+            
             const currentQuestions = currentQuizSection === 'pilihanGanda' ? pilihanGandaQuestions : uraianQuestions;
              if (currentQuestionIndex >= currentQuestions.length) {
                  console.warn("Attempted to show question with invalid index.");
@@ -744,10 +783,18 @@
             }
             questionText.textContent = currentQuestion.question;
             
+            // Hint for MCMA
+            if (currentQuestion.isMCMA) {
+                mcmaHint.classList.remove('hidden');
+            } else {
+                mcmaHint.classList.add('hidden');
+            }
+            
             const totalQuestions = pilihanGandaQuestions.length + uraianQuestions.length;
             const currentDisplayIndex = currentQuizSection === 'pilihanGanda' ? currentQuestionIndex + 1 : pilihanGandaQuestions.length + currentQuestionIndex + 1;
             progressText.textContent = `Soal ${currentDisplayIndex} dari ${totalQuestions}`;
 
+            // --- Logika Tombol Selesai ---
             const isLastPgQuestion = currentQuizSection === 'pilihanGanda' && currentQuestionIndex === pilihanGandaQuestions.length - 1;
             const isLastUrQuestion = currentQuizSection === 'uraian' && currentQuestionIndex === uraianQuestions.length - 1;
             const hasUrQuestions = uraianQuestions.length > 0;
@@ -763,40 +810,61 @@
                 optionsContainer.classList.remove('hidden');
                 uraianAnswerArea.classList.add('hidden');
                 optionsContainer.innerHTML = '';
-                currentQuestion.options.forEach(option => {
+                
+                // Mapping of index to letter for data retrieval
+                const labels = ['A', 'B', 'C', 'D', 'E'];
+                
+                currentQuestion.options.forEach((option, idx) => {
                     const button = document.createElement('button');
                     button.textContent = option;
-                    // Pastikan tombol bisa diklik (tidak disabled) saat soal baru muncul
                     button.disabled = false; 
+                    button.dataset.label = labels[idx]; // Store label (A, B, etc)
                     button.classList.add('option-btn', 'w-full', 'text-left', 'p-4', 'rounded-lg', 'border', 'border-gray-300', 'hover:bg-gray-100', 'focus:outline-none', 'focus:ring-2', 'focus:ring-blue-400', 'transition-colors');
-                    button.onclick = () => selectAnswer(button, option); 
+                    button.onclick = () => selectAnswer(button, labels[idx], currentQuestion.isMCMA); 
                     optionsContainer.appendChild(button);
                 });
-                 nextBtn.classList.remove('hidden'); // Show next button but disabled initially
+                 nextBtn.classList.remove('hidden'); 
             } else {
                 quizTitle.textContent = "Bagian Uraian";
                 optionsContainer.classList.add('hidden');
                 uraianAnswerArea.classList.remove('hidden');
                 document.getElementById('uraian-answer').value = '';
-                nextBtn.disabled = false; // Enable next button for essay
-                nextBtn.classList.remove('hidden'); // Show next button immediately for essay
+                nextBtn.disabled = false; 
+                nextBtn.classList.remove('hidden'); 
             }
             updateQuizProgress(); 
         }
 
-        function selectAnswer(selectedButton, selectedOption) {
-             // Allow changing selection
-             document.querySelectorAll('.option-btn.selected-answer').forEach(btn => {
-                 btn.classList.remove('selected-answer');
-             });
-             selectedButton.classList.add('selected-answer');
-             currentSelectedAnswer = selectedOption; // Store the currently selected option
-             nextBtn.disabled = false; // Enable the next button once an option is selected
+        function selectAnswer(selectedButton, selectedLabel, isMCMA) {
+            if (isMCMA) {
+                // MCMA Logic (Toggle)
+                if (currentSelectedAnswers.includes(selectedLabel)) {
+                    // Deselect
+                    currentSelectedAnswers = currentSelectedAnswers.filter(l => l !== selectedLabel);
+                    selectedButton.classList.remove('selected-answer');
+                } else {
+                    // Select
+                    currentSelectedAnswers.push(selectedLabel);
+                    selectedButton.classList.add('selected-answer');
+                }
+                
+                // Enable next button if at least one answer is selected
+                nextBtn.disabled = currentSelectedAnswers.length === 0;
+
+            } else {
+                // Single Choice Logic (Replace)
+                 document.querySelectorAll('.option-btn.selected-answer').forEach(btn => {
+                     btn.classList.remove('selected-answer');
+                 });
+                 selectedButton.classList.add('selected-answer');
+                 currentSelectedAnswers = [selectedLabel]; 
+                 nextBtn.disabled = false; 
+            }
         }
         
         async function showResults() {
-             if (isSubmitting) return; // Prevent double submission
-             isSubmitting = true; // Set flag
+             if (isSubmitting) return; 
+             isSubmitting = true; 
 
              if (quizTimerInterval) clearInterval(quizTimerInterval); 
              quizTimerInterval = null;
@@ -804,18 +872,14 @@
                 clearInterval(countdownInterval);
                 countdownInterval = null;
             }
-            // isQuizActive should be set false AFTER recording attempt and deleting session
             
-            // Unsubscribe from force end listener AFTER setting isQuizActive to false
             if (sessionStatusUnsubscribe) {
                  sessionStatusUnsubscribe();
                  sessionStatusUnsubscribe = null;
             }
 
-            // Record attempt FIRST
             await recordAttempt(); 
             
-            // Then delete the session doc
             try {
                  if (studentId) { 
                     await db.collection('quiz_sessions').doc(studentId).delete();
@@ -824,7 +888,6 @@
                 console.error("Gagal menghapus sesi dari Firestore:", error);
             }
 
-            // NOW set isQuizActive to false
              isQuizActive = false;
             
             focusWarningScreen.classList.add('hidden');
@@ -832,7 +895,6 @@
             confirmationScreen.classList.add('hidden');
             
             const totalPgQuestions = pilihanGandaQuestions.length;
-            // Final score calculation remains the same
             const wrongAnswers = totalPgQuestions - score; 
             const finalScoreValue = totalPgQuestions > 0 ? Math.round((score / totalPgQuestions) * 100) : 0; 
             
@@ -841,7 +903,6 @@
             
             resultsScreen.classList.remove('hidden');
             
-            // Save results after everything else
             savePgResults(finalScoreValue).then(() => { 
                 if (uraianAnswers.length > 0) {
                     saveUraianResults();
@@ -905,7 +966,6 @@
         // --- Event Listeners ---
         studentClassSelect.addEventListener('change', (e) => {
              studentClass = e.target.value;
-             // Reset dependent fields
              accessCodeInput.value = '';
              codeError.classList.add('hidden');
              nameSection.classList.add('hidden');
@@ -915,27 +975,33 @@
             
              if (studentClass) {
                  accessCodeSection.classList.remove('hidden');
-                 verifyCodeBtn.disabled = false; // Enable verify button
+                 verifyCodeBtn.disabled = false; 
              } else {
                  accessCodeSection.classList.add('hidden');
              }
-             populateNameDropdown(''); // Clear name dropdown
+             populateNameDropdown(''); 
         });
 
         verifyCodeBtn.addEventListener('click', () => {
              const enteredCode = accessCodeInput.value.trim();
              const correctCode = accessCodes[studentClass];
              
+             // LOGGING FOR DEBUGGING ACCESS CODES
+             console.log("Memverifikasi Kode Akses:");
+             console.log("Kelas Dipilih:", studentClass);
+             console.log("Kode yang Dimasukkan:", enteredCode);
+             console.log("Kode yang Seharusnya:", correctCode);
+
              if (enteredCode && correctCode && enteredCode === correctCode) {
                  isCodeVerified = true;
                  codeError.classList.add('hidden');
-                 accessCodeSection.classList.add('hidden'); // Hide code section
-                 nameSection.classList.remove('hidden'); // Show name section
-                 populateNameDropdown(studentClass); // Populate names
+                 accessCodeSection.classList.add('hidden'); 
+                 nameSection.classList.remove('hidden'); 
+                 populateNameDropdown(studentClass); 
              } else {
                  isCodeVerified = false;
                  codeError.classList.remove('hidden');
-                 nameSection.classList.add('hidden'); // Hide name section
+                 nameSection.classList.add('hidden'); 
                  studentNameSelect.disabled = true;
                  startBtn.disabled = true;
              }
@@ -951,11 +1017,11 @@
                      startBtn.disabled = true;
                  } else {
                      attemptError.classList.add('hidden');
-                     startBtn.disabled = false; // Enable start button ONLY if name is selected AND no attempt
+                     startBtn.disabled = false; 
                  }
              } else {
                  attemptError.classList.add('hidden');
-                 startBtn.disabled = true; // Disable if class/name not selected
+                 startBtn.disabled = true; 
              }
         });
 
@@ -963,26 +1029,29 @@
         startFullscreenBtn.addEventListener('click', beginQuizSession);
 
         nextBtn.addEventListener('click', () => {
-             // **Perubahan di sini:** Hanya hitung skor saat tombol Next/Selesai ditekan
-             if (currentQuizSection === 'pilihanGanda' && currentSelectedAnswer) {
-                 const currentQuestion = pilihanGandaQuestions[currentQuestionIndex];
-                 const isCorrect = currentSelectedAnswer === currentQuestion.correctAnswer;
-                 if (isCorrect) {
-                     score++; // Tambah skor HANYA saat konfirmasi (klik next)
+             // Check correctness logic for PG
+             if (currentQuizSection === 'pilihanGanda') {
+                 if (currentSelectedAnswers.length > 0) {
+                     const currentQuestion = pilihanGandaQuestions[currentQuestionIndex];
+                     const selectedSet = new Set(currentSelectedAnswers);
+                     const correctSet = new Set(currentQuestion.correctKeys);
+
+                     // Strict comparison: size must match and all items must match
+                     let isCorrect = false;
+                     if (selectedSet.size === correctSet.size) {
+                         isCorrect = [...selectedSet].every(value => correctSet.has(value));
+                     }
+                     
+                     if (isCorrect) {
+                         score++; 
+                     }
+                     // After scoring, lock visual state is not needed as we move to next question immediately
                  }
-                 // Nonaktifkan SEMUA tombol setelah klik next
-                 document.querySelectorAll('.option-btn').forEach(btn => {
-                    btn.disabled = true;
-                    btn.classList.remove('hover:bg-gray-100');
-                    // Optional: Add locked visual state if needed
-                    // btn.classList.add('locked'); 
-                 });
              } else if (currentQuizSection === 'uraian') {
                  const answer = document.getElementById('uraian-answer').value;
                  uraianAnswers.push({ no: uraianQuestions[currentQuestionIndex].no, answer: answer });
              }
 
-            // Logic for moving to the next question or screen
             if (nextBtn.textContent === 'Selesaikan Kuis') {
                  showResults();
                  return; 
@@ -992,7 +1061,7 @@
             const currentQuestions = currentQuizSection === 'pilihanGanda' ? pilihanGandaQuestions : uraianQuestions;
             if (currentQuestionIndex < currentQuestions.length) {
                 showQuestion();
-            } else { // Akhir sesi saat ini
+            } else { 
                 if (currentQuizSection === 'pilihanGanda' && uraianQuestions.length > 0) {
                     quizContent.classList.add('hidden');
                     confirmationScreen.classList.remove('hidden');
@@ -1017,8 +1086,7 @@
             countdownInterval = null;
             focusWarningScreen.classList.add('hidden');
             enterFullscreen();
-             try { // Update status back to 'Mengerjakan'
-                 // Gunakan set merge untuk memastikan dokumen ada
+             try { 
                  await db.collection('quiz_sessions').doc(studentId).set({ status: 'Mengerjakan' }, { merge: true });
              } catch (error) {
                   console.error("Gagal mengupdate status siswa:", error);
@@ -1033,7 +1101,6 @@
                 await firebase.auth().signInAnonymously();
                 console.log("Firebase Authenticated Anonymously");
                 
-                // Fetch student data and access codes
                 await fetchInitialData(); 
                 
                 document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -1049,4 +1116,3 @@
     </script>
 </body>
 </html>
-
