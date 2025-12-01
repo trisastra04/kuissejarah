@@ -28,7 +28,6 @@
              font-weight: 500;
              position: relative;
          }
-         /* Add checkmark for MCMA selected items */
          .selected-answer::after {
              content: '✓';
              position: absolute;
@@ -61,11 +60,38 @@
          #timer-display {
              font-variant-numeric: tabular-nums;
          }
+         /* Watermark Style */
+         #watermark-container {
+             position: fixed;
+             top: 0;
+             left: 0;
+             width: 100vw;
+             height: 100vh;
+             pointer-events: none; /* Allows clicking through the watermark */
+             z-index: 9999;
+             display: flex;
+             flex-wrap: wrap;
+             justify-content: space-around;
+             align-content: space-around;
+             opacity: 0.08; /* Very subtle transparency */
+             overflow: hidden;
+         }
+         .watermark-text {
+             transform: rotate(-30deg);
+             font-size: 14px;
+             font-weight: bold;
+             color: #000;
+             padding: 20px;
+             white-space: nowrap;
+         }
     </style>
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4 relative">
 
-    <div id="quiz-container" class="w-full max-w-2xl lg:max-w-5xl bg-white rounded-2xl shadow-xl p-6 md:p-8 transition-all duration-500">
+    <!-- Watermark Container (Initially Hidden) -->
+    <div id="watermark-container" class="hidden"></div>
+
+    <div id="quiz-container" class="w-full max-w-2xl lg:max-w-5xl bg-white rounded-2xl shadow-xl p-6 md:p-8 transition-all duration-500 relative z-10">
         
         <!-- Layar Awal -->
         <div id="start-screen">
@@ -91,7 +117,7 @@
                      </div>
                      <p id="code-error" class="text-red-500 text-sm hidden">Kode akses salah!</p>
                 </div>
-                 <!-- Nama Section (muncul setelah kode benar) -->
+                 <!-- Nama Section -->
                 <div id="name-section" class="hidden">
                     <label for="student-name-select" class="block text-sm font-medium text-gray-700">Pilih Nama</label>
                     <select id="student-name-select" disabled class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
@@ -99,7 +125,10 @@
                     </select>
                 </div>
             </div>
-             <p id="form-error" class="text-red-500 text-sm mt-2 text-center hidden">Harap pilih Kelas dan Nama!</p>
+             <div id="form-error-container" class="hidden mt-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                <p id="form-error" class="text-red-600 text-sm text-center font-medium">Harap pilih Kelas dan Nama!</p>
+                <p id="form-error-detail" class="text-red-500 text-xs mt-1 text-center break-words"></p>
+             </div>
              <p id="attempt-error" class="text-yellow-600 text-sm mt-4 text-center hidden">Anda sudah pernah mengerjakan kuis ini.</p>
             <button id="start-btn" disabled class="mt-6 w-full bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-transform transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 flex items-center justify-center">
                 Mulai Kuis
@@ -157,7 +186,7 @@
             </div>
         </div>
 
-        <!-- Layar Hasil Akhir (Disederhanakan) -->
+        <!-- Layar Hasil Akhir -->
         <div id="results-screen" class="hidden text-center py-8">
             <h2 class="text-3xl font-bold text-gray-800 mb-2">Kuis Selesai!</h2>
             <p class="text-gray-600 mb-6">Kamu telah menyelesaikan kuis.</p>
@@ -228,7 +257,9 @@
         const codeError = document.getElementById('code-error');
         const nameSection = document.getElementById('name-section');
         const studentNameSelect = document.getElementById('student-name-select');
+        const formErrorContainer = document.getElementById('form-error-container');
         const formError = document.getElementById('form-error');
+        const formErrorDetail = document.getElementById('form-error-detail');
         const attemptError = document.getElementById('attempt-error'); 
         const startBtn = document.getElementById('start-btn');
         const readyScreen = document.getElementById('ready-screen');
@@ -236,7 +267,7 @@
         const startFullscreenBtn = document.getElementById('start-fullscreen-btn');
         const quizContent = document.getElementById('quiz-content');
         const quizTitle = document.getElementById('quiz-title');
-        const mcmaHint = document.getElementById('mcma-hint'); // New element for MCMA hint
+        const mcmaHint = document.getElementById('mcma-hint'); 
         const timerDisplay = document.getElementById('timer-display');
         const timeLeftEl = document.getElementById('time-left');
         const questionImage = document.getElementById('question-image');
@@ -257,11 +288,12 @@
         const focusWarningScreen = document.getElementById('focus-warning-screen');
         const resumeQuizBtn = document.getElementById('resume-quiz-btn');
         const countdownTimerEl = document.getElementById('countdown-timer');
+        const watermarkContainer = document.getElementById('watermark-container');
         
         // --- Variabel Status Kuis ---
         let currentQuestionIndex = 0;
         let score = 0; 
-        let currentSelectedAnswers = []; // Changed to array for MCMA
+        let currentSelectedAnswers = []; 
         let studentName = "";
         let studentClass = "";
         let studentId = ""; 
@@ -276,29 +308,45 @@
         let quizTimeRemaining = 0; 
 
         // --- Helper Function: Robust CSV Parsing ---
-        const parseCSV = (text) => {
-            const lines = text.trim().replace(/\r\n/g, '\n').split('\n'); 
-            if (lines.length < 1) return [];
+        const parseCSV = (text, separator = ',') => {
+            const cleanText = text.trim().replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const lines = cleanText.split('\n');
+            
+            if (lines.length < 1) return { headers: [], data: [] };
 
-            const headerLine = lines.shift();
-            const regexParser = /(?:"([^"]*(?:""[^"]*)*)"|([^,]*))(,|$)/g;
-            const headers = [];
-            let headerMatch;
-            regexParser.lastIndex = 0;
-            while ((headerMatch = regexParser.exec(headerLine))) {
-                let value = headerMatch[1] !== undefined ? headerMatch[1].replace(/""/g, '"') : headerMatch[2];
-                headers.push(value.trim());
-                if (headerMatch[3] === '') break;
+            // Header Detection (First 10 lines)
+            let headerIndex = -1;
+            let headers = [];
+            const headerKeywords = ['soal', 'pertanyaan', 'question', 'no'];
+
+            for (let i = 0; i < Math.min(lines.length, 10); i++) {
+                const potentialHeaders = lines[i].split(separator).map(h => h.trim().replace(/^"|"$/g, ''));
+                const hasKeyword = potentialHeaders.some(h => headerKeywords.includes(h.toLowerCase()));
+                if (hasKeyword) {
+                    headerIndex = i;
+                    headers = potentialHeaders;
+                    break;
+                }
+            }
+
+            if (headerIndex === -1) {
+                console.warn("Header otomatis tidak ditemukan, menggunakan baris pertama.");
+                headerIndex = 0;
+                headers = lines[0].split(separator).map(h => h.trim().replace(/^"|"$/g, ''));
             }
 
             const results = [];
+            const regexParser = new RegExp(`(?:"([^"]*(?:""[^"]*)*)"|([^${separator}]*))(${separator}|$)`, 'g');
             
             let currentLine = "";
-            let inQuotes = false;
             
-            for (let i = 0; i < lines.length; i++) {
+            for (let i = headerIndex + 1; i < lines.length; i++) {
                 let line = lines[i];
-                currentLine += (currentLine ? "\n" : "") + line;
+                if (currentLine) {
+                     currentLine += "\n" + line;
+                } else {
+                     currentLine = line;
+                }
                 
                 let quoteCount = (currentLine.match(/"/g) || []).length;
                 if (quoteCount % 2 === 0) {
@@ -307,10 +355,17 @@
                     regexParser.lastIndex = 0;
                     while ((match = regexParser.exec(currentLine))) {
                         let value = match[1] !== undefined ? match[1].replace(/""/g, '"') : match[2];
-                        columns.push(value.trim());
+                        columns.push(value ? value.trim() : '');
                         if (match[3] === '') break;
                     }
-                    results.push(columns);
+                    // Remove the last empty match created by the regex if line ends with separator
+                    if (currentLine.endsWith(separator)) {
+                         columns.push('');
+                    }
+                    
+                    if (columns.length > 0 && columns.some(c => c !== '')) {
+                        results.push(columns);
+                    }
                     currentLine = ""; 
                 }
             }
@@ -318,6 +373,49 @@
             return { headers, data: results };
         };
 
+        // --- Watermark Function ---
+        function createWatermark() {
+            const watermarkText = `${studentName}\n${studentClass}`;
+            watermarkContainer.innerHTML = ''; // Clear existing
+            watermarkContainer.classList.remove('hidden');
+
+            // Create enough repeated text elements to fill the screen
+            // Estimate number based on screen size
+            const cols = 5; 
+            const rows = 8;
+
+            for (let i = 0; i < cols * rows; i++) {
+                const div = document.createElement('div');
+                div.classList.add('watermark-text');
+                div.innerText = watermarkText;
+                watermarkContainer.appendChild(div);
+            }
+        }
+
+        // --- Sound Function ---
+        function playWarningSound() {
+            // Menggunakan Web Audio API untuk membuat suara beep/sirine tanpa file eksternal
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+
+                oscillator.type = 'sawtooth'; // Jenis gelombang suara (tajam, seperti alarm)
+                oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // Mulai di nada A4
+                oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1); // Naik ke A5 (efek sirine)
+                
+                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime); // Volume rendah
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5); // Fade out
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.5); // Bunyi selama 0.5 detik
+            } catch (e) {
+                console.warn("Gagal memutar suara peringatan:", e);
+            }
+        }
 
         // --- Fungsi untuk Fullscreen & Anti-Curang ---
         function enterFullscreen() {
@@ -339,6 +437,7 @@
              if (!isQuizActive) return;
 
             if (document.visibilityState === 'hidden') {
+                playWarningSound(); // Mainkan suara peringatan
                 pauseQuizAndStartCountdown();
                 try {
                     await db.collection('quiz_sessions').doc(studentId).set({ status: 'Beralih Tab' }, { merge: true });
@@ -365,6 +464,7 @@
 
         function handleFullscreenChange() {
             if (!document.fullscreenElement && isQuizActive) {
+                playWarningSound(); // Mainkan suara peringatan
                 pauseQuizAndStartCountdown();
             }
         }
@@ -435,7 +535,12 @@
                 if (!studentRes.ok) throw new Error('Gagal mengambil data siswa');
                 if (!codeRes.ok) throw new Error('Gagal mengambil data kode akses');
 
-                const studentParsed = parseCSV(await studentRes.text());
+                let studentCsvText = await studentRes.text();
+                let studentParsed = parseCSV(studentCsvText, ',');
+                if (studentParsed.headers.length <= 1 && studentCsvText.indexOf(';') > -1) {
+                    studentParsed = parseCSV(studentCsvText, ';');
+                }
+
                 const studentHeaders = studentParsed.headers;
                 const studentRows = studentParsed.data;
 
@@ -447,7 +552,12 @@
                 });
                 populateClassDropdown();
 
-                const codeParsed = parseCSV(await codeRes.text());
+                let codeCsvText = await codeRes.text();
+                let codeParsed = parseCSV(codeCsvText, ',');
+                 if (codeParsed.headers.length <= 1 && codeCsvText.indexOf(';') > -1) {
+                    codeParsed = parseCSV(codeCsvText, ';');
+                }
+                
                 const codeHeaders = codeParsed.headers;
                 const codeRows = codeParsed.data;
 
@@ -459,7 +569,7 @@
                         }
                     });
                 }
-                console.log("Kode Akses Dimuat (Cleaned):", accessCodes); 
+                console.log("Kode Akses Dimuat:", accessCodes); 
 
              } catch (error) {
                  console.error("Error during initialization:", error);
@@ -479,54 +589,69 @@
             if (!response.ok) throw new Error('Gagal mengambil data kuis');
             const csvText = await response.text();
             
-            const parsed = parseCSV(csvText);
-            const headers = parsed.headers;
+            // Auto-detect separator
+            let separator = ',';
+            if (csvText.indexOf(';') > -1 && (csvText.match(/;/g) || []).length > (csvText.match(/,/g) || []).length) {
+                separator = ';';
+            }
+            
+            const parsed = parseCSV(csvText, separator);
+            const headers = parsed.headers.map(h => h.trim());
             const rows = parsed.data;
-            const headerMap = headers.reduce((acc, h, i) => ({ ...acc, [h]: i }), {});
+            
+            const getColVal = (cols, keyName) => {
+                const index = headers.findIndex(h => h.toLowerCase() === keyName.toLowerCase());
+                return index !== -1 ? cols[index] : undefined;
+            };
+
+            console.log(`Parsed ${rows.length} rows from CSV using separator '${separator}'`);
 
             for (const columns of rows) {
-                if (columns.length < headers.length) continue;
+                if (!columns || columns.length === 0) continue; 
                 
-                const questionContent = columns[headerMap['Soal']];
+                let questionContent = getColVal(columns, 'Soal');
+                if (!questionContent) questionContent = getColVal(columns, 'Pertanyaan');
+                if (!questionContent) questionContent = getColVal(columns, 'Question');
+                
                 if (!questionContent || questionContent.length === 0) continue;
 
-                const jenisSoal = (columns[headerMap['Jenis Soal']] || 'Pilihan Ganda').trim();
-                const rawKey = columns[headerMap['Kunci Jawaban']] || '';
+                const jenisSoal = (getColVal(columns, 'Jenis Soal') || getColVal(columns, 'Tipe') || 'Pilihan Ganda').trim();
+                const rawKey = getColVal(columns, 'Kunci Jawaban') || getColVal(columns, 'Kunci') || '';
+                const no = getColVal(columns, 'No') || '';
+                const linkGambar = getColVal(columns, 'Link Gambar') || getColVal(columns, 'Gambar') || '';
+                const pembahasan = getColVal(columns, 'Pembahasan') || '';
                 
                 const questionObj = {
-                    no: columns[headerMap['No']] || '', 
+                    no: no, 
                     question: questionContent,
-                    linkGambar: columns[headerMap['Link Gambar']] || '',
-                    // Store keys as array for MCMA support
+                    linkGambar: linkGambar,
                     correctKeys: rawKey.split(',').map(k => k.trim().toUpperCase())
                 };
 
-                if (jenisSoal === 'Pilihan Ganda' || jenisSoal === 'MCMA') {
-                    questionObj.isMCMA = (jenisSoal === 'MCMA');
+                if (jenisSoal.toLowerCase().includes('ganda') || jenisSoal === 'MCMA') {
+                    questionObj.isMCMA = (jenisSoal === 'MCMA' || jenisSoal.toLowerCase().includes('kompleks'));
                     
-                    const options = [ 'Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E' ]
-                        .map(key => headerMap[key] !== undefined ? columns[headerMap[key]] : undefined)
+                    const optionKeys = ['Opsi A', 'Opsi B', 'Opsi C', 'Opsi D', 'Opsi E'];
+                    const options = optionKeys
+                        .map(key => getColVal(columns, key))
                         .filter(opt => opt && opt.length > 0);
                     
-                    // Map values back to letters A,B,C... if needed, but here we store the text
-                    // For verification we compare Selected Option Letter vs Key Letter (stored in correctKeys)
-                    
-                    // Also store options with their labels for easier checking
                     questionObj.optionMap = {};
                     ['A','B','C','D','E'].forEach((label, idx) => {
                         if(options[idx]) questionObj.optionMap[label] = options[idx];
                     });
 
                     Object.assign(questionObj, { 
-                        options: options, // Array of strings
-                        explanation: columns[headerMap['Pembahasan']], 
+                        options: options, 
+                        explanation: pembahasan, 
                         clue: "Periksa kembali setiap opsi dengan teliti." 
                     });
                     allPilihanGandaQuestions.push(questionObj); 
-                } else if (jenisSoal === 'Uraian') {
+                } else if (jenisSoal.toLowerCase().includes('uraian') || jenisSoal.toLowerCase().includes('essay')) {
                     allUraianQuestions.push(questionObj); 
                 }
             }
+             console.log(`Loaded ${allPilihanGandaQuestions.length} PG questions and ${allUraianQuestions.length} Essay questions.`);
         }
         
          function shuffleArray(array) {
@@ -606,6 +731,7 @@
             accessCodeInput.value = ''; 
             codeError.classList.add('hidden');
             attemptError.classList.add('hidden');
+            formErrorContainer.classList.add('hidden');
             startBtn.disabled = true; 
             timerDisplay.classList.add('hidden'); 
             if (quizTimerInterval) clearInterval(quizTimerInterval); 
@@ -629,11 +755,11 @@
             
             if (!studentClass || !studentName || !isCodeVerified) { 
                 formError.textContent = "Harap pilih Kelas, verifikasi Kode Akses, dan pilih Nama!";
-                formError.classList.remove('hidden');
+                formErrorContainer.classList.remove('hidden');
                 return;
             }
             studentId = `${studentClass}_${studentName}`.replace(/\s+/g, '_');
-            formError.classList.add('hidden');
+            formErrorContainer.classList.add('hidden');
             attemptError.classList.add('hidden');
             startBtn.disabled = true;
             startBtn.innerHTML = '<div class="loader"></div> <span>Memeriksa & Memuat...</span>';
@@ -666,7 +792,7 @@
             const quizUrl = quizDataUrls[classLevel];
             if (!quizUrl) {
                 formError.textContent = `Maaf, soal untuk ${studentClass} belum tersedia.`;
-                formError.classList.remove('hidden');
+                formErrorContainer.classList.remove('hidden');
                 startBtn.disabled = false;
                 startBtn.innerHTML = 'Mulai Kuis';
                 return;
@@ -695,7 +821,8 @@
                 
                 if (pilihanGandaQuestions.length === 0 && uraianQuestions.length === 0) {
                      formError.textContent = "Tidak ada soal yang ditemukan/tersisa setelah menerapkan pengaturan.";
-                     formError.classList.remove('hidden');
+                     formErrorDetail.textContent = `Header yang terbaca dari CSV: ${allPilihanGandaQuestions.length > 0 ? 'OK' : 'Gagal membaca kolom Soal'}. Coba periksa nama kolom di Spreadsheet.`;
+                     formErrorContainer.classList.remove('hidden');
                      throw new Error("No questions available after config");
                 }
                 
@@ -705,8 +832,11 @@
 
             } catch (error) {
                 console.error("Error starting quiz:", error);
-                formError.textContent = "Gagal memuat soal kuis. Silakan coba lagi.";
-                formError.classList.remove('hidden');
+                // Form error is already set in logic above for specific cases
+                if (formError.textContent === "Harap pilih Kelas dan Nama!") {
+                     formError.textContent = "Gagal memuat soal kuis. Silakan coba lagi.";
+                     formErrorContainer.classList.remove('hidden');
+                }
             } finally {
                  if (isCodeVerified && !(await checkExistingAttempt())) {
                      startBtn.disabled = false;
@@ -718,6 +848,7 @@
         async function beginQuizSession() {
             enterFullscreen();
             isQuizActive = true;
+            createWatermark(); // Show Watermark
             readyScreen.classList.add('hidden');
             quizContent.classList.remove('hidden');
             
@@ -889,6 +1020,7 @@
             }
 
              isQuizActive = false;
+             watermarkContainer.classList.add('hidden'); // Hide watermark
             
             focusWarningScreen.classList.add('hidden');
             quizContent.classList.add('hidden');
@@ -986,12 +1118,6 @@
              const enteredCode = accessCodeInput.value.trim();
              const correctCode = accessCodes[studentClass];
              
-             // LOGGING FOR DEBUGGING ACCESS CODES
-             console.log("Memverifikasi Kode Akses:");
-             console.log("Kelas Dipilih:", studentClass);
-             console.log("Kode yang Dimasukkan:", enteredCode);
-             console.log("Kode yang Seharusnya:", correctCode);
-
              if (enteredCode && correctCode && enteredCode === correctCode) {
                  isCodeVerified = true;
                  codeError.classList.add('hidden');
@@ -1029,14 +1155,12 @@
         startFullscreenBtn.addEventListener('click', beginQuizSession);
 
         nextBtn.addEventListener('click', () => {
-             // Check correctness logic for PG
              if (currentQuizSection === 'pilihanGanda') {
                  if (currentSelectedAnswers.length > 0) {
                      const currentQuestion = pilihanGandaQuestions[currentQuestionIndex];
                      const selectedSet = new Set(currentSelectedAnswers);
                      const correctSet = new Set(currentQuestion.correctKeys);
 
-                     // Strict comparison: size must match and all items must match
                      let isCorrect = false;
                      if (selectedSet.size === correctSet.size) {
                          isCorrect = [...selectedSet].every(value => correctSet.has(value));
@@ -1045,7 +1169,6 @@
                      if (isCorrect) {
                          score++; 
                      }
-                     // After scoring, lock visual state is not needed as we move to next question immediately
                  }
              } else if (currentQuizSection === 'uraian') {
                  const answer = document.getElementById('uraian-answer').value;
